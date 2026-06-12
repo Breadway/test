@@ -17,11 +17,8 @@ pub struct PlayerDamaged {
 pub enum DamageSource {
     EnemyContact,
     EnemyProjectile,
-    Fire,
-    Acid,
     OwnFire,
     Electric,
-    OtherEnemy,
 }
 
 #[derive(Event)]
@@ -35,11 +32,6 @@ pub struct LevelUp {
 #[derive(Event)]
 pub struct PathBranchAvailable {
     pub level: u32,
-}
-
-#[derive(Event)]
-pub struct UpgradeSelected {
-    pub upgrade: crate::data::upgrades::UpgradeId,
 }
 
 #[derive(Event)]
@@ -61,16 +53,9 @@ pub struct RoomTransitionRequest {
 }
 
 #[derive(Event)]
-pub struct PlayerHealed {
-    pub amount: f32,
-}
-
-#[derive(Event)]
 pub struct BossPhaseChanged {
     pub new_phase: u8,
 }
 
 #[derive(Event)]
-pub struct UpgradesOffered {
-    pub upgrades: Vec<crate::data::upgrades::UpgradeId>,
-}
+pub struct ShotFired;

@@ -11,6 +11,7 @@ pub struct PlayerStats {
     pub projectile_speed: f32,
     pub projectile_range: f32,
     pub damage_multiplier: f32,
+    pub damage_reduction: f32,
     pub character_type: CharacterType,
     // Heavy-specific
     pub foam_armor: f32,
@@ -51,30 +52,6 @@ pub enum CharacterType {
     Heavy,
     Sparky,
     Doc,
-}
-
-impl CharacterType {
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            CharacterType::Torch  => "Torch",
-            CharacterType::QueenB => "Queen B",
-            CharacterType::Mop    => "Mop",
-            CharacterType::Heavy  => "Heavy",
-            CharacterType::Sparky => "Sparky",
-            CharacterType::Doc    => "Doc",
-        }
-    }
-
-    pub fn tagline(&self) -> &'static str {
-        match self {
-            CharacterType::Torch  => "Set everything on fire. Including yourself.",
-            CharacterType::QueenB => "Let someone else do it.",
-            CharacterType::Mop    => "Keep your distance. Seriously.",
-            CharacterType::Heavy  => "More armor means more problems.",
-            CharacterType::Sparky => "It's not a safety violation if it works.",
-            CharacterType::Doc    => "The malpractice insurance ran out.",
-        }
-    }
 }
 
 #[derive(Resource, Default)]

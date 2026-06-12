@@ -15,6 +15,7 @@ impl Plugin for CombatPlugin {
                 projectile_lifetime,
                 enemy_projectile_player_collision,
                 web_projectile_player_collision,
+                detect_enemy_death,
                 enemy_death_system,
                 rebuild_spatial_grid,
             ).chain().run_if(in_state(GameState::Playing)));
@@ -23,7 +24,7 @@ impl Plugin for CombatPlugin {
 
 fn rebuild_spatial_grid(
     mut grid: ResMut<SpatialGrid>,
-    q: Query<(Entity, &Transform), With<Enemy>>,
+    q: Query<(Entity, &Transform), (With<Enemy>, Without<Dead>)>,
 ) {
     grid.clear();
     for (entity, transform) in &q {
@@ -42,21 +43,21 @@ fn move_projectiles(
     }
 }
 
+/// Damage-only: death detection is centralized in `detect_enemy_death`.
 fn projectile_enemy_collision(
     mut commands: Commands,
     mut events: EventWriter<ProjectileHit>,
-    mut kill_events: EventWriter<EnemyKilled>,
     mut projectile_q: Query<(Entity, &Transform, &mut Projectile)>,
-    mut enemy_q: Query<(Entity, &Transform, &mut Health, &Enemy, &XpValue)>,
-    game_manager: Res<GameManager>,
+    mut enemy_q: Query<(Entity, &Transform, &mut Health), (With<Enemy>, Without<Dead>)>,
 ) {
     for (proj_entity, proj_t, mut proj) in &mut projectile_q {
         let pp = proj_t.translation.truncate();
         let proj_size = 8.0f32;
 
-        for (enemy_entity, enemy_t, mut health, enemy, xp_val) in &mut enemy_q {
+        for (enemy_entity, enemy_t, mut health) in &mut enemy_q {
+            if health.is_dead() { continue }
             let ep = enemy_t.translation.truncate();
-            let hit_size = 18.0f32; // approximate enemy hit radius
+            let hit_size = 18.0f32;
 
             if pp.distance(ep) < proj_size + hit_size {
                 let damage = proj.damage * proj.damage_multiplier;
@@ -68,14 +69,6 @@ fn projectile_enemy_collision(
                     damage,
                 });
 
-                if health.is_dead() {
-                    kill_events.send(EnemyKilled {
-                        entity: enemy_entity,
-                        position: ep,
-                        xp_value: xp_val.0,
-                    });
-                }
-
                 if proj.pierce == 0 {
                     commands.entity(proj_entity).despawn_recursive();
                     break;
@@ -84,6 +77,39 @@ fn projectile_enemy_collision(
                 }
             }
         }
+    }
+}
+
+/// The single source of EnemyKilled events. Runs after all damage systems;
+/// the Dead marker guarantees at most one kill event per entity.
+pub fn detect_enemy_death(
+    mut commands: Commands,
+    mut kill_events: EventWriter<EnemyKilled>,
+    q: Query<(Entity, &Health, &Transform, &XpValue), (With<Enemy>, Without<Dead>)>,
+) {
+    for (entity, health, transform, xp_val) in &q {
+        if health.is_dead() {
+            commands.entity(entity).insert(Dead);
+            kill_events.send(EnemyKilled {
+                entity,
+                position: transform.translation.truncate(),
+                xp_value: xp_val.0,
+            });
+        }
+    }
+}
+
+pub fn enemy_death_system(
+    mut commands: Commands,
+    mut kill_events: EventReader<EnemyKilled>,
+    mut game_manager: ResMut<GameManager>,
+) {
+    for ev in kill_events.read() {
+        if let Some(entity_commands) = commands.get_entity(ev.entity) {
+            entity_commands.despawn_recursive();
+        }
+        game_manager.enemies_remaining = game_manager.enemies_remaining.saturating_sub(1);
+        game_manager.total_kills += 1;
     }
 }
 
@@ -105,7 +131,7 @@ fn enemy_projectile_player_collision(
     mut commands: Commands,
     mut player_damage: EventWriter<PlayerDamaged>,
     player_q: Query<&Transform, With<Player>>,
-    proj_q: Query<(Entity, &Transform, &EnemyProjectile), Without<WebProjectile>>,
+    proj_q: Query<(Entity, &Transform, &EnemyProjectile)>,
 ) {
     let Ok(player_t) = player_q.get_single() else { return };
     let pp = player_t.translation.truncate();
@@ -142,18 +168,38 @@ fn web_projectile_player_collision(
     }
 }
 
-fn enemy_death_system(
-    mut commands: Commands,
-    mut kill_events: EventReader<EnemyKilled>,
-    mut game_manager: ResMut<GameManager>,
-) {
-    for ev in kill_events.read() {
-        if let Some(mut entity_commands) = commands.get_entity(ev.entity) {
-            entity_commands.despawn_recursive();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::components::enemy::EnemyType;
+
+    /// An entity reduced to 0 HP by multiple sources in one frame must
+    /// produce exactly one EnemyKilled event across all frames.
+    #[test]
+    fn one_kill_event_per_enemy() {
+        let mut app = App::new();
+        app.add_event::<EnemyKilled>();
+        app.insert_resource(GameManager::default());
+        app.add_systems(Update, (detect_enemy_death, enemy_death_system).chain());
+
+        let enemy = app.world_mut().spawn((
+            Enemy {
+                enemy_type: EnemyType::Roach,
+                speed: 0.0, damage: 0.0, attack_range: 0.0,
+                attack_cooldown: 0.0, attack_timer: 0.0, xp_value: 5,
+            },
+            Health { current: 0.0, max: 30.0 },
+            Transform::default(),
+            XpValue(5),
+        )).id();
+
+        // Run several frames; despawn is deferred so a buggy detect could re-fire
+        for _ in 0..3 {
+            app.update();
         }
-        if game_manager.enemies_remaining > 0 {
-            game_manager.enemies_remaining -= 1;
-        }
-        game_manager.total_kills += 1;
+
+        let gm = app.world().resource::<GameManager>();
+        assert_eq!(gm.total_kills, 1, "exactly one kill must be counted");
+        assert!(app.world().get_entity(enemy).is_err(), "enemy must be despawned");
     }
 }
