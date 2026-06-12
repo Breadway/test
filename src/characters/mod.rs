@@ -6,8 +6,6 @@ pub mod sparky;
 pub mod torch;
 
 use bevy::prelude::*;
-use crate::components::player::CharacterType;
-use crate::state::GameState;
 
 pub struct CharactersPlugin;
 
@@ -20,13 +18,5 @@ impl Plugin for CharactersPlugin {
             .add_plugins(heavy::HeavyPlugin)
             .add_plugins(sparky::SparkyPlugin)
             .add_plugins(doc::DocPlugin);
-    }
-}
-
-pub fn is_playing_as(
-    character: CharacterType,
-) -> impl Fn(Query<&crate::components::player::PlayerStats, With<crate::components::player::Player>>) -> bool {
-    move |q: Query<&crate::components::player::PlayerStats, With<crate::components::player::Player>>| {
-        q.get_single().map(|s| s.character_type == character).unwrap_or(false)
     }
 }

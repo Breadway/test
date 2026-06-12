@@ -9,13 +9,14 @@ pub struct UIPlugin;
 impl Plugin for UIPlugin {
     fn build(&self, app: &mut App) {
         app
-            .add_systems(OnEnter(GameState::Playing), spawn_hud)
+            .add_systems(OnEnter(GameState::Playing), spawn_hud.after(crate::plugins::room::setup_room_graph))
             .add_systems(OnExit(GameState::Playing), despawn_hud)
             .add_systems(Update, (
                 update_health_bar,
                 update_xp_bar,
                 update_level_display,
                 update_kill_counter,
+                update_boss_bar,
                 show_room_toast,
                 tick_room_toast,
             ).run_if(in_state(GameState::Playing)))
@@ -42,6 +43,8 @@ impl Plugin for UIPlugin {
 #[derive(Component)] struct LevelText;
 #[derive(Component)] struct KillCountText;
 #[derive(Component)] struct RoomNameText;
+#[derive(Component)] struct BossBarRoot;
+#[derive(Component)] struct BossBarFill;
 
 fn spawn_hud(mut commands: Commands, graph: Res<RoomGraph>) {
     let room_name = graph.nodes.get(0).map(|n| n.lore_name.clone()).unwrap_or_default();
@@ -132,6 +135,33 @@ fn spawn_hud(mut commands: Commands, graph: Res<RoomGraph>) {
             ));
         });
 
+        // Boss HP bar (bottom center, hidden until a boss exists)
+        hud.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(28.0),
+                left: Val::Percent(25.0),
+                width: Val::Percent(50.0),
+                height: Val::Px(20.0),
+                border: UiRect::all(Val::Px(2.0)),
+                display: Display::None,
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.1, 0.02, 0.02)),
+            BorderColor(Color::srgb(0.7, 0.1, 0.1)),
+            BossBarRoot,
+        )).with_children(|bar| {
+            bar.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.85, 0.1, 0.1)),
+                BossBarFill,
+            ));
+        });
+
         // Room name toast (top center)
         hud.spawn((
             Node {
@@ -187,6 +217,22 @@ fn update_level_display(
     }
 }
 
+fn update_boss_bar(
+    boss_q: Query<&Health, With<crate::components::enemy::Boss>>,
+    mut root_q: Query<&mut Node, (With<BossBarRoot>, Without<BossBarFill>)>,
+    mut fill_q: Query<&mut Node, With<BossBarFill>>,
+) {
+    let boss_health = boss_q.get_single().ok();
+    for mut node in &mut root_q {
+        node.display = if boss_health.is_some() { Display::Flex } else { Display::None };
+    }
+    if let Some(health) = boss_health {
+        for mut node in &mut fill_q {
+            node.width = Val::Percent(health.fraction() * 100.0);
+        }
+    }
+}
+
 fn update_kill_counter(
     gm: Res<GameManager>,
     mut q: Query<&mut Text, With<KillCountText>>,
@@ -222,9 +268,8 @@ fn tick_room_toast(
         if toast.timer > 0.0 {
             toast.timer -= dt;
             let alpha = (toast.timer / 1.5).min(1.0);
-            if let TextColor(c) = color.as_mut() {
-                *c = Color::srgba(0.7, 0.7, 0.5, alpha);
-            }
+            let TextColor(c) = color.as_mut();
+            *c = Color::srgba(0.7, 0.7, 0.5, alpha);
         }
     }
 }
@@ -310,8 +355,11 @@ fn main_menu_interaction(
 #[derive(Component)] struct CharSelectRoot;
 #[derive(Component)] struct CharSelectButton(crate::components::player::CharacterType);
 
-fn spawn_char_select(mut commands: Commands) {
+fn spawn_char_select(mut commands: Commands, mut rng: ResMut<GameRng>) {
     use crate::components::player::CharacterType::*;
+    use rand::Rng;
+    use crate::data::lore::LOADING_TIPS;
+    let tip = LOADING_TIPS[rng.0.gen_range(0..LOADING_TIPS.len())];
     let chars = [
         (Torch,  Color::srgb(1.0, 0.4, 0.1),  "TORCH",   "Pyrotechnic",  "Fire spreads to all nearby enemies.", "Takes damage in own flames."),
         (QueenB, Color::srgb(1.0, 0.85, 0.1),  "QUEEN B", "Apiarist",     "Dead bugs become ally bees.",         "Cannot deal direct damage."),
@@ -390,6 +438,12 @@ fn spawn_char_select(mut commands: Commands) {
                 });
             }
         });
+
+        root.spawn((
+            Text::new(tip),
+            TextFont { font_size: 12.0, ..default() },
+            TextColor(Color::srgb(0.45, 0.45, 0.4)),
+        ));
     });
 }
 
@@ -420,8 +474,9 @@ fn spawn_game_over(
     mut rng: ResMut<GameRng>,
 ) {
     use rand::Rng;
-    use crate::data::lore::DEATH_MESSAGES;
+    use crate::data::lore::{DEATH_MESSAGES, LOADING_TIPS};
     let msg = DEATH_MESSAGES[rng.0.gen_range(0..DEATH_MESSAGES.len())];
+    let tip = LOADING_TIPS[rng.0.gen_range(0..LOADING_TIPS.len())];
 
     commands.spawn((
         Node {
@@ -445,6 +500,11 @@ fn spawn_game_over(
             Text::new(msg),
             TextFont { font_size: 15.0, ..default() },
             TextColor(Color::srgb(0.55, 0.55, 0.55)),
+        ));
+        root.spawn((
+            Text::new(format!("TIP: {}", tip)),
+            TextFont { font_size: 12.0, ..default() },
+            TextColor(Color::srgb(0.45, 0.45, 0.4)),
         ));
         root.spawn((
             Text::new(format!(

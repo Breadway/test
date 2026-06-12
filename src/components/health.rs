@@ -1,5 +1,10 @@
 use bevy::prelude::*;
 
+/// Marker inserted exactly once by `detect_enemy_death` so an entity can
+/// never emit more than one EnemyKilled event.
+#[derive(Component)]
+pub struct Dead;
+
 #[derive(Component, Clone)]
 pub struct Health {
     pub current: f32,

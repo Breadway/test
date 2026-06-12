@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use crate::components::*;
 use crate::components::player::CharacterType;
 use crate::events::*;
+use crate::resources::*;
 use crate::state::GameState;
 use rand::Rng;
 
@@ -19,30 +20,37 @@ fn doc_charge_system(
     time: Res<Time>,
     buttons: Res<ButtonInput<MouseButton>>,
     mut commands: Commands,
-    mut player_q: Query<(&Transform, &Facing, &mut PlayerStats, &mut AttackCooldown), With<Player>>,
+    mut rng: ResMut<GameRng>,
+    mut player_q: Query<(&Transform, &Facing, &mut PlayerStats, &mut AttackCooldown, Option<&Stunned>), With<Player>>,
     mut player_damage: EventWriter<PlayerDamaged>,
 ) {
-    let Ok((transform, facing, mut stats, mut cooldown)) = player_q.get_single_mut() else { return };
+    let Ok((transform, facing, mut stats, mut cooldown, stunned)) = player_q.get_single_mut() else { return };
     if stats.character_type != CharacterType::Doc { return }
+
+    if stunned.is_some() {
+        stats.charging = false;
+        stats.charge = 0.0;
+        return;
+    }
 
     if buttons.pressed(MouseButton::Left) {
         stats.charging = true;
         stats.charge = (stats.charge + 60.0 * time.delta_secs()).min(stats.charge_max);
 
-        // Crit fail chance above 75% charge
+        // Critical instability: >75% charge gambles 5%/sec on a misfire
         if stats.charge > stats.charge_max * 0.75 {
-            let chance = 0.05 * time.delta_secs(); // 5% per second
-            let roll: f32 = rand::thread_rng().gen();
+            let chance = 0.05 * time.delta_secs();
+            let roll: f32 = rng.0.gen();
             if roll < chance {
                 player_damage.send(PlayerDamaged {
                     amount: 20.0,
                     source: DamageSource::Electric,
                 });
                 stats.charge = 0.0;
+                stats.charging = false;
             }
         }
     } else if stats.charging && cooldown.0 <= 0.0 {
-        // Release beam
         stats.charging = false;
         let charge_frac = stats.charge / stats.charge_max;
         let damage = stats.attack_damage * charge_frac * charge_frac * stats.damage_multiplier;
@@ -64,7 +72,7 @@ fn doc_charge_system(
                     damage,
                     owner_is_player: true,
                     lifetime: stats.projectile_range / stats.projectile_speed,
-                    pierce: 5, // beam passes through enemies
+                    pierce: 5,
                     damage_multiplier: 1.0,
                 },
                 Velocity(dir * stats.projectile_speed),

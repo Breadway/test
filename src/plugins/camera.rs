@@ -22,6 +22,10 @@ fn camera_follow(
 ) {
     let Ok(player_t) = player_q.get_single() else { return };
     let Ok(mut cam_t) = cam_q.get_single_mut() else { return };
-    let target = player_t.translation;
-    cam_t.translation = cam_t.translation.lerp(target, 0.1);
+    // Lerp X/Y only — pulling the camera's Z toward the player breaks rendering
+    let target = player_t.translation.truncate();
+    let current = cam_t.translation.truncate();
+    let next = current.lerp(target, 0.1);
+    cam_t.translation.x = next.x;
+    cam_t.translation.y = next.y;
 }

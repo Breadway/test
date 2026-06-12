@@ -12,12 +12,12 @@ impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app
             .add_systems(OnEnter(GameState::Playing), spawn_player)
-            .add_systems(OnExit(GameState::Playing), despawn_player)
             .add_systems(Update, (
                 player_movement,
                 player_aim,
                 player_attack,
                 cooldown_tick,
+                stun_tick,
                 apply_velocity_player,
                 player_damage_handler,
                 slow_status_tick,
@@ -30,7 +30,12 @@ pub const PLAYER_Z: f32 = 10.0;
 fn spawn_player(
     mut commands: Commands,
     selection: Res<CharacterSelection>,
+    existing: Query<Entity, With<Player>>,
 ) {
+    // Re-entering Playing (from UpgradeSelect/MapSelect) must not spawn a second player
+    if !existing.is_empty() {
+        return;
+    }
     let stats = stats_for_character(selection.character);
     let color = player_color(selection.character);
 
@@ -62,22 +67,18 @@ fn player_color(ct: crate::components::player::CharacterType) -> Color {
     }
 }
 
-fn despawn_player(
-    mut commands: Commands,
-    q: Query<Entity, With<Player>>,
-) {
-    for e in &q {
-        commands.entity(e).despawn_recursive();
-    }
-}
-
 fn player_movement(
     keys: Res<ButtonInput<KeyCode>>,
-    mut q: Query<(&PlayerStats, &mut Velocity), With<Player>>,
+    mut q: Query<(&PlayerStats, &mut Velocity, Option<&Stunned>), With<Player>>,
 ) {
-    let Ok((stats, mut vel)) = q.get_single_mut() else { return };
-    let speed = stats.effective_speed();
+    let Ok((stats, mut vel, stunned)) = q.get_single_mut() else { return };
 
+    if stunned.is_some() {
+        vel.0 = Vec2::ZERO;
+        return;
+    }
+
+    let speed = stats.effective_speed();
     let mut dir = Vec2::ZERO;
     if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp)    { dir.y += 1.0; }
     if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown)  { dir.y -= 1.0; }
@@ -85,6 +86,20 @@ fn player_movement(
     if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) { dir.x += 1.0; }
 
     vel.0 = if dir != Vec2::ZERO { dir.normalize() * speed } else { Vec2::ZERO };
+}
+
+fn stun_tick(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &mut Stunned)>,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut stun) in &mut q {
+        stun.0 -= dt;
+        if stun.0 <= 0.0 {
+            commands.entity(entity).remove::<Stunned>();
+        }
+    }
 }
 
 fn player_aim(
@@ -106,17 +121,22 @@ fn player_aim(
     }
 }
 
+/// Standard projectile attack. Characters with bespoke attacks (Queen B's
+/// pheromone darts excepted, Mop melee, Heavy foam, Doc charge beam) are
+/// excluded here and handled in their own character systems.
 fn player_attack(
     mut commands: Commands,
     buttons: Res<ButtonInput<MouseButton>>,
-    mut q: Query<(&Transform, &Facing, &PlayerStats, &mut AttackCooldown), With<Player>>,
-    game_manager: Res<GameManager>,
+    mut shot_fired: EventWriter<ShotFired>,
+    mut q: Query<(&Transform, &Facing, &PlayerStats, &mut AttackCooldown, Option<&Stunned>), With<Player>>,
 ) {
-    let Ok((transform, facing, stats, mut cooldown)) = q.get_single_mut() else { return };
-    if cooldown.0 > 0.0 { return }
+    use crate::components::player::CharacterType::*;
+    let Ok((transform, facing, stats, mut cooldown, stunned)) = q.get_single_mut() else { return };
+    if cooldown.0 > 0.0 || stunned.is_some() { return }
 
-    // Queen B can't deal direct damage
-    if stats.character_type == crate::components::player::CharacterType::QueenB { return }
+    // These characters do not fire standard projectiles:
+    // QueenB cannot deal direct damage; Mop is melee; Heavy sprays foam; Doc charges.
+    if matches!(stats.character_type, QueenB | Mop | Heavy | Doc) { return }
 
     if buttons.pressed(MouseButton::Left) {
         let dir = if facing.0 != Vec2::ZERO { facing.0 } else { Vec2::X };
@@ -139,6 +159,7 @@ fn player_attack(
             Velocity(dir * stats.projectile_speed),
         ));
 
+        shot_fired.send(ShotFired);
         cooldown.0 = 1.0 / stats.attack_rate;
     }
 }
@@ -181,31 +202,67 @@ fn apply_velocity_player(
     }
 }
 
+/// The ONLY consumer of PlayerDamaged. All character-specific mitigation
+/// (Heavy's foam armor, Queen B's bee shield, path damage reduction) is
+/// applied here so damage is processed exactly once.
 fn player_damage_handler(
+    mut commands: Commands,
     mut events: EventReader<PlayerDamaged>,
-    mut q: Query<&mut Health, With<Player>>,
-    mut game_manager: ResMut<GameManager>,
+    mut q: Query<(&mut Health, &mut PlayerStats), With<Player>>,
+    bee_q: Query<Entity, With<BeeAlly>>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
-    let Ok(mut health) = q.get_single_mut() else { return };
+    use crate::components::player::CharacterType::*;
+    let Ok((mut health, mut stats)) = q.get_single_mut() else { return };
+
+    let mut bees: Vec<Entity> = Vec::new();
+
     for ev in events.read() {
-        health.take_damage(ev.amount);
-        if health.is_dead() {
-            next_state.set(GameState::GameOver);
+        let mut amount = ev.amount * (1.0 - stats.damage_reduction).max(0.0);
+
+        match stats.character_type {
+            Heavy => {
+                // Foam armor absorbs first; losing armor speeds Heavy back up
+                if stats.foam_armor > 0.0 {
+                    let absorbed = amount.min(stats.foam_armor);
+                    stats.foam_armor -= absorbed;
+                    amount -= absorbed;
+                }
+            }
+            QueenB => {
+                // Shared Fate: damage kills bees before touching HP (1 bee per 4 dmg)
+                if bees.is_empty() {
+                    bees = bee_q.iter().collect();
+                }
+                while amount >= 4.0 && !bees.is_empty() {
+                    let bee = bees.pop().unwrap();
+                    commands.entity(bee).despawn_recursive();
+                    stats.bee_count = stats.bee_count.saturating_sub(1);
+                    amount -= 4.0;
+                }
+            }
+            _ => {}
         }
+
+        if amount > 0.0 {
+            health.take_damage(amount);
+        }
+    }
+
+    if health.is_dead() {
+        next_state.set(GameState::GameOver);
     }
 }
 
 fn slow_status_tick(
     time: Res<Time>,
     mut commands: Commands,
-    mut q: Query<(Entity, &mut SlowStatus, &mut Speed)>,
+    mut q: Query<(Entity, &mut SlowStatus)>,
 ) {
     let dt = time.delta_secs();
-    for (entity, mut slow, mut speed) in &mut q {
+    for (entity, mut slow) in &mut q {
         slow.remaining -= dt;
         if slow.remaining <= 0.0 {
-            speed.0 /= slow.factor;
             commands.entity(entity).remove::<SlowStatus>();
         }
     }

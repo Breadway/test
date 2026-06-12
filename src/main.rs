@@ -11,7 +11,6 @@ mod state;
 
 use characters::CharactersPlugin;
 use components::player::CharacterSelection;
-use components::xp::XpManager;
 use events::*;
 use plugins::camera::CameraPlugin;
 use plugins::combat::CombatPlugin;
@@ -43,13 +42,11 @@ fn main() {
         .add_event::<RoomCleared>()
         .add_event::<LevelUp>()
         .add_event::<PathBranchAvailable>()
-        .add_event::<UpgradeSelected>()
         .add_event::<FireSpread>()
         .add_event::<ProjectileHit>()
         .add_event::<RoomTransitionRequest>()
-        .add_event::<PlayerHealed>()
         .add_event::<BossPhaseChanged>()
-        .add_event::<UpgradesOffered>()
+        .add_event::<ShotFired>()
         // Resources
         .insert_resource(SpatialGrid::default())
         .insert_resource(GameManager::default())
