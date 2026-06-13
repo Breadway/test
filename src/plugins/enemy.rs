@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use crate::components::*;
 use crate::data::enemies::*;
 use crate::events::*;
+use crate::plugins::visual::attach_hp_bar;
 use crate::resources::*;
 use crate::state::GameState;
 
@@ -42,6 +43,7 @@ fn process_spawn_queue(
     mut queue: ResMut<SpawnQueue>,
     mut game_manager: ResMut<GameManager>,
     room_state: Res<RoomState>,
+    sprites: Res<crate::data::pixel_art::GameSprites>,
 ) {
     let spawnable = queue.pending.len().min(MAX_SPAWNS_PER_FRAME);
     for n in 0..spawnable {
@@ -52,12 +54,17 @@ fn process_spawn_queue(
         } else {
             req.position
         };
-        spawn_enemy(&mut commands, req.enemy_type, pos);
+        spawn_enemy(&mut commands, &sprites, req.enemy_type, pos);
         game_manager.enemies_remaining += 1;
     }
 }
 
-pub fn spawn_enemy(commands: &mut Commands, enemy_type: EnemyType, pos: Vec2) {
+pub fn spawn_enemy(
+    commands: &mut Commands,
+    sprites: &crate::data::pixel_art::GameSprites,
+    enemy_type: EnemyType,
+    pos: Vec2,
+) {
     let cfg = match enemy_type {
         EnemyType::Roach  => &ROACH,
         EnemyType::Spider => &SPIDER,
@@ -66,9 +73,18 @@ pub fn spawn_enemy(commands: &mut Commands, enemy_type: EnemyType, pos: Vec2) {
         EnemyType::Beetle => &BEETLE,
         EnemyType::Boss   => &BOSS,
     };
+    let image = match enemy_type {
+        EnemyType::Roach  => sprites.roach.clone(),
+        EnemyType::Spider => sprites.spider.clone(),
+        EnemyType::Wasp   => sprites.wasp.clone(),
+        EnemyType::Larvae => sprites.larvae.clone(),
+        EnemyType::Beetle => sprites.beetle.clone(),
+        EnemyType::Boss   => sprites.boss.clone(),
+    };
 
     let mut entity = commands.spawn((
         Sprite {
+            image,
             color: cfg.color,
             custom_size: Some(cfg.size),
             ..default()
@@ -97,6 +113,11 @@ pub fn spawn_enemy(commands: &mut Commands, enemy_type: EnemyType, pos: Vec2) {
         }
         _ => {}
     }
+
+    let half_h = cfg.size.y * 0.5;
+    entity.with_children(|children| {
+        attach_hp_bar(children, half_h);
+    });
 }
 
 /// Shared chase AI for ground melee enemies: Roach, Larvae, Beetle.
@@ -133,6 +154,7 @@ fn chase_ai(
 fn spider_ai(
     time: Res<Time>,
     mut commands: Commands,
+    sprites: Res<crate::data::pixel_art::GameSprites>,
     player_q: Query<&Transform, (With<Player>, Without<Enemy>)>,
     mut enemy_q: Query<(&mut Enemy, &mut Velocity, &Transform, &AggroRange), (Without<Player>, Without<Dead>)>,
 ) {
@@ -169,6 +191,7 @@ fn spider_ai(
                     let dir = (player_pos - pos).normalize();
                     commands.spawn((
                         Sprite {
+                            image: sprites.web.clone(),
                             color: Color::srgb(0.7, 0.7, 0.8),
                             custom_size: Some(Vec2::new(10.0, 10.0)),
                             ..default()
@@ -189,6 +212,7 @@ fn spider_ai(
 fn wasp_ai(
     time: Res<Time>,
     mut commands: Commands,
+    sprites: Res<crate::data::pixel_art::GameSprites>,
     player_q: Query<&Transform, (With<Player>, Without<Enemy>)>,
     mut enemy_q: Query<(&mut Enemy, &mut Velocity, &Transform), (Without<Player>, With<Flying>, Without<Dead>)>,
 ) {
@@ -224,6 +248,7 @@ fn wasp_ai(
                 let dir = (player_pos - pos).normalize();
                 commands.spawn((
                     Sprite {
+                        image: sprites.bolt.clone(),
                         color: Color::srgb(1.0, 0.85, 0.1),
                         custom_size: Some(Vec2::new(8.0, 8.0)),
                         ..default()
@@ -245,6 +270,7 @@ fn boss_ai(
     time: Res<Time>,
     mut commands: Commands,
     mut queue: ResMut<SpawnQueue>,
+    sprites: Res<crate::data::pixel_art::GameSprites>,
     mut phase_events: EventWriter<BossPhaseChanged>,
     player_q: Query<&Transform, (With<Player>, Without<Enemy>)>,
     mut boss_q: Query<(&Enemy, &mut Boss, &Health, &mut Velocity, &Transform, &mut Sprite), Without<Dead>>,
@@ -308,6 +334,7 @@ fn boss_ai(
                     let dir = Vec2::new(angle.cos(), angle.sin());
                     commands.spawn((
                         Sprite {
+                            image: sprites.bolt.clone(),
                             color: Color::srgb(1.0, 0.2, 0.2),
                             custom_size: Some(Vec2::new(10.0, 10.0)),
                             ..default()
@@ -326,6 +353,7 @@ fn boss_ai(
 fn larvae_evolve(
     time: Res<Time>,
     mut commands: Commands,
+    sprites: Res<crate::data::pixel_art::GameSprites>,
     mut q: Query<(Entity, &mut EvolveTimer, &mut Enemy, &mut Health, &mut Sprite, &mut XpValue), Without<Dead>>,
 ) {
     let dt = time.delta_secs();
@@ -340,6 +368,7 @@ fn larvae_evolve(
             enemy.xp_value = ROACH.xp_value;
             health.max = ROACH.max_health;
             health.current = ROACH.max_health;
+            sprite.image = sprites.roach.clone();
             sprite.color = ROACH.color;
             sprite.custom_size = Some(ROACH.size);
             xp.0 = ROACH.xp_value;

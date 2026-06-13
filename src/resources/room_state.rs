@@ -71,6 +71,8 @@ pub fn generate_room_graph(rng: &mut ChaCha8Rng) -> Vec<RoomNode> {
             11 | 24 => RoomType::Boss,
             6 | 16 => RoomType::Shop,
             3 | 13 | 20 => RoomType::Elite,
+            // Some rooms show as "???" on the map; they still run normal waves
+            _ if rng.gen_bool(0.2) => RoomType::Unknown,
             _ => RoomType::Combat,
         };
 

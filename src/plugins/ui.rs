@@ -18,6 +18,7 @@ impl Plugin for UIPlugin {
                 update_kill_counter,
                 update_boss_bar,
                 show_room_toast,
+                announce_events,
                 tick_room_toast,
             ).run_if(in_state(GameState::Playing)))
             .add_systems(OnEnter(GameState::MainMenu), spawn_main_menu)
@@ -32,6 +33,7 @@ impl Plugin for UIPlugin {
                 main_menu_interaction,
                 char_select_interaction,
                 game_over_interaction,
+                button_hover_feedback,
             ));
     }
 }
@@ -259,17 +261,46 @@ fn show_room_toast(
     }
 }
 
+/// Level-up and boss-phase announcements reuse the room toast text.
+fn announce_events(
+    mut level_events: EventReader<LevelUp>,
+    mut phase_events: EventReader<BossPhaseChanged>,
+    mut text_q: Query<(&mut Text, &mut TextColor, &mut crate::plugins::room::RoomToastText)>,
+) {
+    let mut msg: Option<(String, Color)> = None;
+    for ev in level_events.read() {
+        msg = Some((
+            format!("PROMOTION — PERFORMANCE TIER {}", ev.new_level),
+            Color::srgb(0.4, 0.9, 0.4),
+        ));
+    }
+    for ev in phase_events.read() {
+        msg = Some((
+            format!("SPECIMEN ADAPTING — PHASE {}", ev.new_phase),
+            Color::srgb(1.0, 0.3, 0.2),
+        ));
+    }
+    if let Some((m, c)) = msg {
+        for (mut text, mut color, mut toast) in &mut text_q {
+            **text = m.clone();
+            *color = TextColor(c);
+            toast.timer = 3.0;
+        }
+    }
+}
+
 fn tick_room_toast(
     time: Res<Time>,
     mut q: Query<(&mut TextColor, &mut crate::plugins::room::RoomToastText)>,
 ) {
+    use bevy::color::Alpha;
     let dt = time.delta_secs();
     for (mut color, mut toast) in &mut q {
         if toast.timer > 0.0 {
             toast.timer -= dt;
-            let alpha = (toast.timer / 1.5).min(1.0);
+            let alpha = (toast.timer / 1.5).clamp(0.0, 1.0);
             let TextColor(c) = color.as_mut();
-            *c = Color::srgba(0.7, 0.7, 0.5, alpha);
+            c.set_alpha(alpha);
         }
     }
 }
@@ -400,6 +431,7 @@ fn spawn_char_select(mut commands: Commands, mut rng: ResMut<GameRng>) {
             },
         )).with_children(|grid| {
             for (ct, color, name, role, power, constraint) in &chars {
+                let stats = crate::data::characters::stats_for_character(*ct);
                 grid.spawn((
                     Button,
                     Node {
@@ -424,6 +456,11 @@ fn spawn_char_select(mut commands: Commands, mut rng: ResMut<GameRng>) {
                         Text::new(*role),
                         TextFont { font_size: 12.0, ..default() },
                         TextColor(Color::srgb(0.6, 0.6, 0.6)),
+                    ));
+                    card.spawn((
+                        Text::new(format!("HP {}  •  SPD {}", stats.max_health as u32, stats.base_speed as u32)),
+                        TextFont { font_size: 11.0, ..default() },
+                        TextColor(Color::srgb(0.55, 0.65, 0.55)),
                     ));
                     card.spawn((
                         Text::new(format!("⚡ {}", power)),
@@ -624,4 +661,21 @@ fn spawn_victory(
 
 fn despawn_victory(mut commands: Commands, q: Query<Entity, With<VictoryRoot>>) {
     for e in &q { commands.entity(e).despawn_recursive(); }
+}
+
+/// Generic hover/press feedback for every Button: brighten toward white,
+/// restore the cached original color on release.
+fn button_hover_feedback(
+    mut q: Query<(Entity, &Interaction, &mut BackgroundColor), (Changed<Interaction>, With<Button>)>,
+    mut base_colors: Local<bevy::utils::HashMap<Entity, Color>>,
+) {
+    use bevy::color::Mix;
+    for (entity, interaction, mut bg) in &mut q {
+        let original = *base_colors.entry(entity).or_insert(bg.0);
+        bg.0 = match interaction {
+            Interaction::Hovered => original.mix(&Color::WHITE, 0.12),
+            Interaction::Pressed => original.mix(&Color::WHITE, 0.25),
+            Interaction::None => original,
+        };
+    }
 }

@@ -59,7 +59,6 @@ fn fire_spread_system(
     time: Res<Time>,
     mut commands: Commands,
     grid: Res<SpatialGrid>,
-    mut spread_events: EventWriter<FireSpread>,
     mut on_fire_q: Query<(Entity, &Transform, &mut FireStatus), (With<OnFire>, Without<Dead>)>,
     spreadable_q: Query<(), (With<Enemy>, Without<OnFire>, Without<Dead>)>,
     transform_q: Query<&Transform>,
@@ -89,7 +88,6 @@ fn fire_spread_system(
                     FireStatus::new(6.0),
                     OnFire,
                 ));
-                spread_events.send(FireSpread { from: from_entity, to: candidate });
                 spread_count += 1;
             }
         }

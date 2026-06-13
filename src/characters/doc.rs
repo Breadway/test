@@ -21,6 +21,7 @@ fn doc_charge_system(
     buttons: Res<ButtonInput<MouseButton>>,
     mut commands: Commands,
     mut rng: ResMut<GameRng>,
+    sprites: Res<crate::data::pixel_art::GameSprites>,
     mut player_q: Query<(&Transform, &Facing, &mut PlayerStats, &mut AttackCooldown, Option<&Stunned>), With<Player>>,
     mut player_damage: EventWriter<PlayerDamaged>,
 ) {
@@ -62,18 +63,19 @@ fn doc_charge_system(
 
             commands.spawn((
                 Sprite {
+                    image: sprites.bullet.clone(),
                     color: Color::srgb(0.8, 0.3, 1.0),
-                    custom_size: Some(Vec2::new(12.0, 5.0)),
+                    custom_size: Some(Vec2::new(14.0, 6.0)),
                     ..default()
                 },
                 Transform::from_xyz(origin.x, origin.y, 5.0)
                     .with_rotation(Quat::from_rotation_z(dir.y.atan2(dir.x))),
                 Projectile {
                     damage,
-                    owner_is_player: true,
                     lifetime: stats.projectile_range / stats.projectile_speed,
                     pierce: 5,
                     damage_multiplier: 1.0,
+                    hit_entities: Vec::new(),
                 },
                 Velocity(dir * stats.projectile_speed),
             ));
