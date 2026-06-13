@@ -3,10 +3,12 @@ use bevy::prelude::*;
 #[derive(Component)]
 pub struct Projectile {
     pub damage: f32,
-    pub owner_is_player: bool,
     pub lifetime: f32,
     pub pierce: u32,
     pub damage_multiplier: f32,
+    /// Enemies already struck — piercing projectiles overlap a target for
+    /// several frames and must not hit it once per frame.
+    pub hit_entities: Vec<Entity>,
 }
 
 #[derive(Component)]

@@ -20,6 +20,7 @@ impl Plugin for PlayerPlugin {
                 stun_tick,
                 apply_velocity_player,
                 player_damage_handler,
+                damage_flash_tick,
                 slow_status_tick,
             ).run_if(in_state(GameState::Playing)));
     }
@@ -30,6 +31,7 @@ pub const PLAYER_Z: f32 = 10.0;
 fn spawn_player(
     mut commands: Commands,
     selection: Res<CharacterSelection>,
+    sprites: Res<crate::data::pixel_art::GameSprites>,
     existing: Query<Entity, With<Player>>,
 ) {
     // Re-entering Playing (from UpgradeSelect/MapSelect) must not spawn a second player
@@ -41,17 +43,18 @@ fn spawn_player(
 
     commands.spawn((
         Sprite {
+            image: sprites.player.clone(),
             color,
             custom_size: Some(Vec2::new(28.0, 28.0)),
             ..default()
         },
         Transform::from_xyz(0.0, 0.0, PLAYER_Z),
         Player,
-        stats,
         AttackCooldown(0.0),
         Velocity::default(),
         Facing::default(),
-        Health::new(120.0),
+        Health::new(stats.max_health),
+        stats,
     ));
 }
 
@@ -69,16 +72,16 @@ fn player_color(ct: crate::components::player::CharacterType) -> Color {
 
 fn player_movement(
     keys: Res<ButtonInput<KeyCode>>,
-    mut q: Query<(&PlayerStats, &mut Velocity, Option<&Stunned>), With<Player>>,
+    mut q: Query<(&PlayerStats, &mut Velocity, Option<&Stunned>, Option<&SlowStatus>), With<Player>>,
 ) {
-    let Ok((stats, mut vel, stunned)) = q.get_single_mut() else { return };
+    let Ok((stats, mut vel, stunned, slow)) = q.get_single_mut() else { return };
 
     if stunned.is_some() {
         vel.0 = Vec2::ZERO;
         return;
     }
 
-    let speed = stats.effective_speed();
+    let speed = stats.effective_speed() * slow.map_or(1.0, |s| s.factor);
     let mut dir = Vec2::ZERO;
     if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp)    { dir.y += 1.0; }
     if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown)  { dir.y -= 1.0; }
@@ -127,6 +130,7 @@ fn player_aim(
 fn player_attack(
     mut commands: Commands,
     buttons: Res<ButtonInput<MouseButton>>,
+    sprites: Res<crate::data::pixel_art::GameSprites>,
     mut shot_fired: EventWriter<ShotFired>,
     mut q: Query<(&Transform, &Facing, &PlayerStats, &mut AttackCooldown, Option<&Stunned>), With<Player>>,
 ) {
@@ -144,6 +148,7 @@ fn player_attack(
 
         commands.spawn((
             Sprite {
+                image: sprites.bullet.clone(),
                 color: projectile_color(stats.character_type),
                 custom_size: Some(Vec2::new(8.0, 8.0)),
                 ..default()
@@ -151,10 +156,10 @@ fn player_attack(
             Transform::from_xyz(origin.x, origin.y, 5.0),
             Projectile {
                 damage: stats.attack_damage * stats.damage_multiplier,
-                owner_is_player: true,
                 lifetime: stats.projectile_range / stats.projectile_speed,
                 pierce: 0,
                 damage_multiplier: 1.0,
+                hit_entities: Vec::new(),
             },
             Velocity(dir * stats.projectile_speed),
         ));
@@ -208,14 +213,15 @@ fn apply_velocity_player(
 fn player_damage_handler(
     mut commands: Commands,
     mut events: EventReader<PlayerDamaged>,
-    mut q: Query<(&mut Health, &mut PlayerStats), With<Player>>,
+    mut q: Query<(Entity, &mut Health, &mut PlayerStats), With<Player>>,
     bee_q: Query<Entity, With<BeeAlly>>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     use crate::components::player::CharacterType::*;
-    let Ok((mut health, mut stats)) = q.get_single_mut() else { return };
+    let Ok((player_entity, mut health, mut stats)) = q.get_single_mut() else { return };
 
     let mut bees: Vec<Entity> = Vec::new();
+    let mut flash: Option<Color> = None;
 
     for ev in events.read() {
         let mut amount = ev.amount * (1.0 - stats.damage_reduction).max(0.0);
@@ -246,11 +252,39 @@ fn player_damage_handler(
 
         if amount > 0.0 {
             health.take_damage(amount);
+            // Threshold skips Torch's tiny per-frame self-burn ticks
+            if amount >= 1.0 {
+                flash = Some(match ev.source {
+                    DamageSource::OwnFire | DamageSource::Electric => Color::srgb(1.0, 0.6, 0.1),
+                    _ => Color::srgb(1.0, 0.2, 0.2),
+                });
+            }
         }
+    }
+
+    if let Some(color) = flash {
+        commands.entity(player_entity).insert(DamageFlash { timer: 0.15, color });
     }
 
     if health.is_dead() {
         next_state.set(GameState::GameOver);
+    }
+}
+
+fn damage_flash_tick(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &mut DamageFlash, &mut Sprite, &PlayerStats), With<Player>>,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut flash, mut sprite, stats) in &mut q {
+        flash.timer -= dt;
+        if flash.timer <= 0.0 {
+            sprite.color = player_color(stats.character_type);
+            commands.entity(entity).remove::<DamageFlash>();
+        } else {
+            sprite.color = flash.color;
+        }
     }
 }
 

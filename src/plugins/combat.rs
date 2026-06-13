@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 use crate::components::*;
+use crate::data::pixel_art::GameSprites;
 use crate::events::*;
+use crate::plugins::visual::{EnemyFlash, spawn_sparks};
 use crate::resources::*;
 use crate::state::GameState;
 
@@ -46,25 +48,36 @@ fn move_projectiles(
 /// Damage-only: death detection is centralized in `detect_enemy_death`.
 fn projectile_enemy_collision(
     mut commands: Commands,
+    sprites: Res<GameSprites>,
     mut events: EventWriter<ProjectileHit>,
     mut projectile_q: Query<(Entity, &Transform, &mut Projectile)>,
-    mut enemy_q: Query<(Entity, &Transform, &mut Health), (With<Enemy>, Without<Dead>)>,
+    mut enemy_q: Query<(Entity, &Transform, &mut Health, &Sprite), (With<Enemy>, Without<Dead>)>,
 ) {
     for (proj_entity, proj_t, mut proj) in &mut projectile_q {
         let pp = proj_t.translation.truncate();
         let proj_size = 8.0f32;
 
-        for (enemy_entity, enemy_t, mut health) in &mut enemy_q {
+        for (enemy_entity, enemy_t, mut health, enemy_sprite) in &mut enemy_q {
             if health.is_dead() { continue }
+            if proj.hit_entities.contains(&enemy_entity) { continue }
             let ep = enemy_t.translation.truncate();
-            let hit_size = 18.0f32;
 
-            if pp.distance(ep) < proj_size + hit_size {
+            if pp.distance(ep) < proj_size + 18.0 {
                 let damage = proj.damage * proj.damage_multiplier;
                 health.take_damage(damage);
+                proj.hit_entities.push(enemy_entity);
+
+                // Hit flash — store original color before overwriting
+                commands.entity(enemy_entity).insert(EnemyFlash {
+                    timer: 0.12,
+                    original_color: enemy_sprite.color,
+                });
+
+                // Impact sparks at hit point
+                let hit_pos = (pp + ep) * 0.5;
+                spawn_sparks(&mut commands, &sprites, hit_pos, Color::srgb(1.0, 0.85, 0.2));
 
                 events.send(ProjectileHit {
-                    projectile: proj_entity,
                     target: enemy_entity,
                     damage,
                 });

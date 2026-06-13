@@ -69,7 +69,7 @@ struct FoamVfx(f32);
 fn heavy_armor_visual(
     time: Res<Time>,
     mut commands: Commands,
-    mut player_q: Query<(&PlayerStats, &mut Sprite), With<Player>>,
+    mut player_q: Query<(&PlayerStats, &mut Sprite), (With<Player>, Without<DamageFlash>)>,
     mut vfx_q: Query<(Entity, &mut FoamVfx, &mut Sprite), Without<Player>>,
 ) {
     let dt = time.delta_secs();

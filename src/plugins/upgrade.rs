@@ -274,7 +274,6 @@ fn handle_card_click(
     mut game_manager: ResMut<GameManager>,
     mut next_state: ResMut<NextState<GameState>>,
     mut transition_event: EventWriter<RoomTransitionRequest>,
-    pending: Res<PendingChoice>,
     graph: Res<RoomGraph>,
 ) {
     for (interaction, card) in &interaction_q {
@@ -354,7 +353,6 @@ fn handle_card_click(
             }
         }
 
-        let _ = pending; // PendingChoice is reset by the next handler that sets it
         break;
     }
 }

@@ -27,6 +27,7 @@ const BEE_LIFETIME: f32 = 30.0;
 fn queen_b_summon_bee(
     mut commands: Commands,
     mut kill_events: EventReader<EnemyKilled>,
+    sprites: Res<crate::data::pixel_art::GameSprites>,
     mut player_q: Query<&mut PlayerStats, With<Player>>,
 ) {
     let Ok(mut stats) = player_q.get_single_mut() else { return };
@@ -36,6 +37,7 @@ fn queen_b_summon_bee(
         if stats.bee_count >= stats.bee_max { break }
         commands.spawn((
             Sprite {
+                image: sprites.bee.clone(),
                 color: Color::srgb(1.0, 0.85, 0.0),
                 custom_size: Some(Vec2::new(10.0, 10.0)),
                 ..default()
