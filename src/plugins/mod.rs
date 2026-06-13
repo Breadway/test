@@ -5,4 +5,5 @@ pub mod player;
 pub mod room;
 pub mod ui;
 pub mod upgrade;
+pub mod visual;
 pub mod xp;

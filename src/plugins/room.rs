@@ -38,6 +38,9 @@ impl Plugin for RoomPlugin {
 pub struct RoomWall;
 
 #[derive(Component)]
+pub struct RoomFloor;
+
+#[derive(Component)]
 pub struct RoomToastText {
     pub timer: f32,
 }
@@ -68,6 +71,7 @@ fn enter_first_room(
     mut game_manager: ResMut<GameManager>,
     mut spawn_queue: ResMut<SpawnQueue>,
     mut rng: ResMut<GameRng>,
+    sprites: Res<crate::data::pixel_art::GameSprites>,
     player_q: Query<(), With<Player>>,
     graph: Res<RoomGraph>,
 ) {
@@ -76,7 +80,7 @@ fn enter_first_room(
         return;
     }
     game_manager.enemies_remaining = 0;
-    setup_room(&mut commands, &mut room_state, &mut game_manager, &mut spawn_queue, &mut rng, &graph, 0);
+    setup_room(&mut commands, &mut room_state, &mut game_manager, &mut spawn_queue, &mut rng, &sprites, &graph, 0);
 }
 
 fn setup_room(
@@ -85,6 +89,7 @@ fn setup_room(
     game_manager: &mut GameManager,
     spawn_queue: &mut SpawnQueue,
     rng: &mut GameRng,
+    sprites: &crate::data::pixel_art::GameSprites,
     graph: &RoomGraph,
     room_index: usize,
 ) {
@@ -95,11 +100,11 @@ fn setup_room(
     spawn_queue.pending.clear();
     game_manager.enemies_remaining = 0;
 
-    spawn_walls(commands, room_state.bounds);
+    spawn_room_geometry(commands, sprites, room_state.bounds);
 
     // Lore collectible: 30% chance in combat rooms
     let is_combat = graph.nodes.get(room_index)
-        .map(|n| n.room_type == RoomType::Combat)
+        .map(|n| matches!(n.room_type, RoomType::Combat | RoomType::Unknown))
         .unwrap_or(false);
     if is_combat && rng.0.gen_bool(0.3) {
         let doc_index = rng.0.gen_range(0..COLLECTIBLE_DOCS.len());
@@ -108,8 +113,9 @@ fn setup_room(
         let y = rng.0.gen_range(bounds.min.y + 80.0..bounds.max.y - 80.0);
         commands.spawn((
             Sprite {
+                image: sprites.lore_doc.clone(),
                 color: Color::srgb(1.0, 0.95, 0.5),
-                custom_size: Some(Vec2::new(14.0, 14.0)),
+                custom_size: Some(Vec2::new(16.0, 20.0)),
                 ..default()
             },
             Transform::from_xyz(x, y, 2.0),
@@ -131,28 +137,57 @@ fn setup_room(
     }
 }
 
-fn spawn_walls(commands: &mut Commands, bounds: Rect) {
-    let wall_thickness = 24.0;
+fn spawn_room_geometry(
+    commands: &mut Commands,
+    sprites: &crate::data::pixel_art::GameSprites,
+    bounds: Rect,
+) {
+    let wall_thickness = 32.0;
+    let tile = 16.0; // pixel art tile resolution
     let w = bounds.width();
     let h = bounds.height();
     let cx = (bounds.min.x + bounds.max.x) / 2.0;
     let cy = (bounds.min.y + bounds.max.y) / 2.0;
 
-    let walls = [
+    // Floor — single large tiled sprite covering the play area
+    commands.spawn((
+        Sprite {
+            image: sprites.floor.clone(),
+            color: Color::srgb(0.12, 0.12, 0.15),
+            custom_size: Some(Vec2::new(w, h)),
+            image_mode: bevy::sprite::SpriteImageMode::Tiled {
+                tile_x: true,
+                tile_y: true,
+                stretch_value: tile,
+            },
+            ..default()
+        },
+        Transform::from_xyz(cx, cy, -1.0),
+        RoomFloor,
+    ));
+
+    // Walls — four sides, tiled
+    let walls: &[(f32, f32, f32, f32)] = &[
         (cx, bounds.max.y + wall_thickness / 2.0, w + wall_thickness * 2.0, wall_thickness),
         (cx, bounds.min.y - wall_thickness / 2.0, w + wall_thickness * 2.0, wall_thickness),
         (bounds.min.x - wall_thickness / 2.0, cy, wall_thickness, h),
         (bounds.max.x + wall_thickness / 2.0, cy, wall_thickness, h),
     ];
 
-    for (x, y, wall_w, wall_h) in walls {
+    for &(x, y, wall_w, wall_h) in walls {
         commands.spawn((
             Sprite {
-                color: Color::srgb(0.18, 0.18, 0.2),
+                image: sprites.wall.clone(),
+                color: Color::srgb(0.55, 0.55, 0.62),
                 custom_size: Some(Vec2::new(wall_w, wall_h)),
+                image_mode: bevy::sprite::SpriteImageMode::Tiled {
+                    tile_x: true,
+                    tile_y: true,
+                    stretch_value: tile,
+                },
                 ..default()
             },
-            Transform::from_xyz(x, y, 0.5),
+            Transform::from_xyz(x, y, 0.0),
             RoomWall,
         ));
     }
@@ -213,19 +248,19 @@ fn handle_room_transition(
     mut spawn_queue: ResMut<SpawnQueue>,
     mut graph: ResMut<RoomGraph>,
     mut rng: ResMut<GameRng>,
-    cleanup_q: Query<Entity, Or<(With<RoomWall>, With<EnemyProjectile>, With<WebProjectile>, With<Projectile>, With<LoreDoc>)>>,
+    sprites: Res<crate::data::pixel_art::GameSprites>,
+    cleanup_q: Query<Entity, Or<(With<RoomWall>, With<RoomFloor>, With<EnemyProjectile>, With<WebProjectile>, With<Projectile>, With<LoreDoc>)>>,
 ) {
     for ev in events.read() {
         for e in &cleanup_q { commands.entity(e).despawn_recursive(); }
 
-        // Advance graph position — without this the run loops forever
         let prev = graph.current_node;
         if let Some(node) = graph.nodes.get_mut(prev) {
             node.completed = true;
         }
         graph.current_node = ev.destination_room;
 
-        setup_room(&mut commands, &mut room_state, &mut game_manager, &mut spawn_queue, &mut rng, &graph, ev.destination_room);
+        setup_room(&mut commands, &mut room_state, &mut game_manager, &mut spawn_queue, &mut rng, &sprites, &graph, ev.destination_room);
         game_manager.rooms_cleared += 1;
     }
 }
@@ -377,7 +412,7 @@ fn spawn_map_select_ui(
                     MapNodeButton(node_id),
                 )).with_children(|card| {
                     card.spawn((
-                        Text::new(type_label),
+                        Text::new(format!("ZONE {:02} — {}", node.id, type_label)),
                         TextFont { font_size: 16.0, ..default() },
                         TextColor(color),
                     ));
@@ -427,8 +462,10 @@ fn cleanup_run_entities(
         With<EnemyProjectile>,
         With<WebProjectile>,
         With<RoomWall>,
+        With<RoomFloor>,
         With<LoreDoc>,
         With<LorePopup>,
+        With<crate::plugins::visual::ImpactParticle>,
     )>>,
 ) {
     for e in &q {

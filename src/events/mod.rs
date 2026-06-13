@@ -35,14 +35,7 @@ pub struct PathBranchAvailable {
 }
 
 #[derive(Event)]
-pub struct FireSpread {
-    pub from: Entity,
-    pub to: Entity,
-}
-
-#[derive(Event)]
 pub struct ProjectileHit {
-    pub projectile: Entity,
     pub target: Entity,
     pub damage: f32,
 }

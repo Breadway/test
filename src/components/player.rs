@@ -5,6 +5,7 @@ pub struct Player;
 
 #[derive(Component, Clone)]
 pub struct PlayerStats {
+    pub max_health: f32,
     pub base_speed: f32,
     pub attack_damage: f32,
     pub attack_rate: f32,
@@ -42,6 +43,13 @@ impl PlayerStats {
 
 #[derive(Component, Default)]
 pub struct AttackCooldown(pub f32);
+
+/// Brief sprite tint after taking damage; color varies by damage source.
+#[derive(Component)]
+pub struct DamageFlash {
+    pub timer: f32,
+    pub color: Color,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum CharacterType {
